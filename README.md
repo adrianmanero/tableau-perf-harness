@@ -3,17 +3,54 @@
 Scripted, repeatable interaction benchmarks for a published Tableau view.
 One scenario file per view. The runner and the report do not change between views.
 
-Each step is timed until the Embedding API call resolves (load, parameter, filter,
-refresh, and the rest). That is the wait a person sees, covering the server query
-and the render. It is not a warehouse-cost measurement, and it is not a breakdown
-of query time versus client layout.
+Each step is timed until the Embedding API call resolves. That is the wait a person
+sees on the published view, covering the server query and the render together.
+
+## Why not Tableau Desktop's recorder
+
+Tableau Desktop already has a performance recording: Help → Settings and Performance → Start Performance Recording, do the clicks, then stop. Use that when you need to explain one slow click. The recording splits the click into overlapping events (the query, connecting, client-side sorting, layout). Those rows nest, so adding them up is not the time a person waited. The number they felt is the top-level command.
+
+This harness answers a different question: is the published view faster for a fixed series of interactions? It opens the view in a browser, runs the same written steps for several passes, leaves the warmup pass out of the median, and compares two result files by step label. A Desktop recording does not do that. It measures Desktop opening a workbook on that machine, the clicks are whatever happened during that one session, and nothing is stored that you can rerun against the other workbook.
+
+Use a Desktop recording to explain a slow step. Use this harness to decide whether a published change is faster. It does not separate query time from render time, and it does not measure warehouse cost.
 
 ## Setup
 
 ```bash
 python3 -m pip install -r requirements.txt
 python3 -m playwright install chromium
+cp config.example.yaml config.yaml
 ```
+
+Edit `server` and `site` in `config.yaml`. That file is gitignored.
+
+## Configuration
+
+`config.yaml` holds the Tableau server and the defaults shared by scenarios. Copy `config.example.yaml`.
+
+```yaml
+server: https://your-pod.online.tableau.com
+site: your-site
+warmup_passes: 1
+passes: 3
+step_gap_ms: 500
+interactive_timeout_s: 300
+timeout_s: 3600
+headless: false
+viewport:
+  width: 1920
+  height: 1080
+```
+
+A scenario can then name the view:
+
+```yaml
+view: Workbook/Overview
+```
+
+That is opened as `https://your-pod.online.tableau.com/t/your-site/views/Workbook/Overview`. A full `view_url` in the scenario is used as written. The same key in the scenario wins over `config.yaml`. A command-line flag (`--timeout`, `--width`, `--height`, `--headless`, `--headed`) wins over both. `TABLEAU_PERF_PROFILE` wins over `profile` in the config.
+
+The runner reads `./config.yaml`, then `config.yaml` in the repo root. `--config path` selects a file.
 
 ## Run
 
@@ -21,10 +58,7 @@ python3 -m playwright install chromium
 python3 run.py scenarios/local/baseline.yaml
 ```
 
-Copy `examples/baseline.yaml` into `scenarios/local/` first and set `view_url`
-to your published view. The first run opens a window. Sign in there if the view
-asks. The session stays in `~/.cache/tableau-perf-profile`, so later runs can
-pass `--headless`.
+Copy `examples/baseline.yaml` into `scenarios/local/` and point it at your view. The first run opens a window. Sign in there if the view asks. The session stays in `~/.cache/tableau-perf-profile`, so later runs can pass `--headless`.
 
 ```bash
 python3 run.py --clear-session          # delete the stored session and exit
@@ -64,7 +98,8 @@ A scenario is one YAML (or JSON) file. The `steps` list is the script: each item
 
 ```yaml
 name: baseline              # optional label stored with the run
-view_url: https://your-pod.online.tableau.com/#/site/your-site/views/Workbook/Sheet
+view: Workbook/Sheet        # joined with server and site from config.yaml
+# view_url: https://...     # or a full URL, which is used as written
 warmup_passes: 1            # recorded, excluded from median/mean/p95
 passes: 3                   # measured repetitions of the whole step list
 step_gap_ms: 500            # pause between steps, not included in the timing
@@ -86,7 +121,7 @@ A browser URL (`…/#/site/<site>/views/…`) is rewritten to the embed form (`�
 
 `value` and entries in `values` may be date tokens, resolved to `YYYY-MM-DD` when the run starts: `{today}`, `{today-7d}`, `{today-1m}`, `{year-start}`, `{year-start-1y}`, `{year-start-2y+1d}`. Anything else is sent through as written. Check the resolved file with `--dry-run` before a real run.
 
-The whole step list runs `warmup_passes + passes` times. A failed step is recorded and the run continues. `--fail-on-step-error` exits non-zero in that case. If `load` never becomes interactive, the run exits non-zero either way.
+The whole step list runs `warmup_passes + passes` times. Start the list with `load` when each pass should open a fresh view. Without that, the next pass continues from the view left open by the previous one. A failed step is recorded and the run continues. `--fail-on-step-error` exits non-zero in that case. If `load` never becomes interactive, the run exits non-zero either way.
 
 `load` starts a new session, and `refresh` bypasses the data cache. Warmth left on the server by other people is outside this tool. Interleave the two sides of an A/B pair. When `warmup_passes` is 0, the first measured pass is also reported as `cold p1`.
 
@@ -129,16 +164,6 @@ The whole step list runs `warmup_passes + passes` times. A failed step is record
   ms: 2000
 ```
 
-## What not to commit
+## Agents
 
-| Path | Why |
-|---|---|
-| `scenarios/local/` | Real view URLs and filter values |
-| `results/` | View URLs and timings |
-| `*.stuck.png` | Screenshot of the signed-in view |
-| `~/.cache/tableau-perf-profile` | Sign-in cookies |
-
-`examples/` is safe to commit: placeholder URLs and made-up timings.
-Check `git status` before the first push. `python3 -m unittest discover -s tests -t .`
-checks that tracked files do not contain a company name and that date
-resolution, URL normalization, and the report math behave as they should.
+`CLAUDE.md` is the guide for an LLM turning a written walkthrough into a scenario file. Give it the dashboard in your own words (which sheet, which filters, which two views to compare). It should use the captions you wrote, read `server` and `site` from `config.yaml`, and write the YAML under `scenarios/local/`.

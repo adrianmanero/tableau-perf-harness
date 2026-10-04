@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tableau_perf.run import ensure_profile_safe, main, start_server  # noqa: E402
+from tableau_perf.run import ensure_profile_safe, main, run_settings, start_server  # noqa: E402
 from tableau_perf.scenario import ScenarioError  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,10 +31,12 @@ class ProfileTests(unittest.TestCase):
             profile = Path(directory) / "session"
             profile.mkdir()
             (profile / "cookie").write_text("nope")
+            empty_config = Path(directory) / "empty.yaml"
+            empty_config.write_text("{}\n")
             previous = os.environ.get("TABLEAU_PERF_PROFILE")
             os.environ["TABLEAU_PERF_PROFILE"] = str(profile)
             try:
-                code = main(["--clear-session"])
+                code = main(["--clear-session", "--config", str(empty_config)])
             finally:
                 if previous is None:
                     os.environ.pop("TABLEAU_PERF_PROFILE", None)
@@ -42,6 +44,16 @@ class ProfileTests(unittest.TestCase):
                     os.environ["TABLEAU_PERF_PROFILE"] = previous
             self.assertEqual(code, 0)
             self.assertFalse(profile.exists())
+
+
+class SettingsTests(unittest.TestCase):
+    def test_cli_width_wins_over_config(self):
+        args = type("Args", (), {"headless": False, "headed": False, "timeout": None, "width": 1280, "height": None})()
+        settings = run_settings(args, {"viewport": {"width": 800, "height": 600}, "timeout_s": 10})
+        self.assertEqual(settings["width"], 1280)
+        self.assertEqual(settings["height"], 600)
+        self.assertEqual(settings["timeout"], 10)
+        self.assertFalse(settings["headless"])
 
 
 class DryRunTests(unittest.TestCase):
@@ -53,9 +65,11 @@ class DryRunTests(unittest.TestCase):
                 "steps:\n"
                 "  - {action: load, label: load view}\n"
             )
+            empty_config = Path(directory) / "empty.yaml"
+            empty_config.write_text("{}\n")
             buffer = io.StringIO()
             with redirect_stdout(buffer):
-                code = main([str(path), "--dry-run"])
+                code = main([str(path), "--dry-run", "--config", str(empty_config)])
         self.assertEqual(code, 0)
         text = buffer.getvalue()
         self.assertNotIn("secret-value", text)

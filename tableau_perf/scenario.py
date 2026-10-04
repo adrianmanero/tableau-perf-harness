@@ -142,19 +142,24 @@ def _positive_int(scenario: dict, key: str, default: int, minimum: int) -> int:
     return raw
 
 
-def load_scenario(path: Path, today: datetime.date | None = None) -> dict:
-    """Read YAML or JSON, normalize the view URL, and resolve date tokens in place."""
+def load_scenario(path: Path, today: datetime.date | None = None, config: dict | None = None) -> dict:
+    """Read YAML or JSON, fill defaults from config, and resolve the view URL and date tokens."""
+    from tableau_perf.config import resolve_view_url
+
     text = path.read_text()
     if path.suffix in (".yaml", ".yml"):
         raw = yaml.safe_load(text)
     else:
         raw = json.loads(text)
     scenario = _require_mapping(raw, "scenario")
-    if "view_url" not in scenario or "steps" not in scenario:
-        missing = "view_url" if "view_url" not in scenario else "steps"
-        raise ScenarioError(f"scenario is missing required key '{missing}'")
+    if "steps" not in scenario:
+        raise ScenarioError("scenario is missing required key 'steps'")
+    config = config or {}
+    for key in ("warmup_passes", "passes", "step_gap_ms", "interactive_timeout_s"):
+        if key not in scenario and key in config:
+            scenario[key] = config[key]
 
-    raw_url = str(scenario["view_url"])
+    raw_url = resolve_view_url(scenario, config)
     removed = sensitive_query_names(raw_url)
     view_url = strip_sensitive_query(normalize_view_url(raw_url))
     parsed = urllib.parse.urlsplit(view_url)

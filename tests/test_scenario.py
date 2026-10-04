@@ -11,6 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from tableau_perf.config import load_config, resolve_view_url  # noqa: E402
 from tableau_perf.scenario import (  # noqa: E402
     ScenarioError,
     load_scenario,
@@ -102,6 +103,46 @@ class LoadTests(unittest.TestCase):
             )
             with self.assertRaises(ScenarioError):
                 load_scenario(path)
+
+    def test_view_is_joined_to_server_and_site(self):
+        config = {"server": "https://pod.example.com", "site": "demo", "passes": 2, "step_gap_ms": 250}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "view.yaml"
+            path.write_text("view: Workbook/Overview\nsteps:\n  - {action: load, label: load view}\n")
+            scenario = load_scenario(path, config=config)
+        self.assertEqual(scenario["view_url"], "https://pod.example.com/t/demo/views/Workbook/Overview")
+        self.assertEqual(scenario["passes"], 2)
+        self.assertEqual(scenario["step_gap_ms"], 250)
+        self.assertEqual(scenario["warmup_passes"], 1)
+
+    def test_scenario_value_wins_over_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "view.yaml"
+            path.write_text(
+                "view_url: https://pod.example.com/t/demo/views/Book/Sheet\n"
+                "passes: 4\n"
+                "steps:\n  - {action: load, label: load view}\n"
+            )
+            scenario = load_scenario(path, config={"passes": 9, "server": "https://other.example.com", "site": "nope"})
+        self.assertEqual(scenario["view_url"], "https://pod.example.com/t/demo/views/Book/Sheet")
+        self.assertEqual(scenario["passes"], 4)
+
+    def test_view_without_server_fails(self):
+        with self.assertRaises(ScenarioError):
+            resolve_view_url({"view": "Workbook/Sheet"}, {})
+
+    def test_example_config_loads(self):
+        config = load_config(Path(__file__).resolve().parents[1] / "config.example.yaml")
+        self.assertEqual(config["server"], "https://your-pod.online.tableau.com")
+        self.assertEqual(config["site"], "your-site")
+        self.assertEqual(config["viewport"], {"width": 1920, "height": 1080})
+
+    def test_server_rejects_credentials(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.yaml"
+            path.write_text("server: https://user:pw@pod.example.com\nsite: demo\n")
+            with self.assertRaises(ScenarioError):
+                load_config(path)
 
     def test_example_templates_load(self):
         root = Path(__file__).resolve().parents[1]

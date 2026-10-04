@@ -1,0 +1,21 @@
+# Copy to config.yaml and edit. config.yaml is gitignored.
+# A scenario's own value wins over this file. A command-line flag wins over both.
+
+server: https://your-pod.online.tableau.com
+site: your-site
+
+# Used when the scenario does not set them.
+warmup_passes: 1
+passes: 3
+step_gap_ms: 500
+interactive_timeout_s: 300
+
+# Whole-run limit, viewport, and browser. Override with --timeout, --width, --height, --headless, --headed.
+timeout_s: 3600
+headless: false
+viewport:
+  width: 1920
+  height: 1080
+
+# Optional. TABLEAU_PERF_PROFILE wins over this. Keep it outside the repo.
+# profile: ~/.cache/tableau-perf-profile

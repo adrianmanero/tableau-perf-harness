@@ -6,6 +6,9 @@ results/
 scenarios/local/*
 !scenarios/local/.gitkeep
 
+# Local server, site, and run defaults. The template is config.example.yaml.
+config.yaml
+
 # Browser profile (sign-in cookies). The default lives in ~/.cache, outside this tree.
 .tableau-perf-profile/
 

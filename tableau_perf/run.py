@@ -14,6 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from tableau_perf import __version__
+from tableau_perf.config import load_config
 from tableau_perf.scenario import ScenarioError, load_scenario, view_slug
 
 RUNNER_HTML = Path(__file__).resolve().parent / "runner.html"
@@ -21,10 +22,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PROFILE = Path.home() / ".cache" / "tableau-perf-profile"
 
 
-def profile_dir() -> Path:
+def profile_dir(config: dict | None = None) -> Path:
     override = os.environ.get("TABLEAU_PERF_PROFILE")
     if override:
         return Path(override).expanduser()
+    if config and config.get("profile"):
+        return Path(str(config["profile"])).expanduser()
     return DEFAULT_PROFILE
 
 
@@ -78,6 +81,32 @@ def start_server(runner_html: bytes, scenario: bytes) -> ThreadingHTTPServer:
     return server
 
 
+def _positive_arg(value: int | None, fallback: int, label: str) -> int:
+    number = fallback if value is None else value
+    if number < 1:
+        raise ScenarioError(f"{label} must be a positive integer")
+    return number
+
+
+def run_settings(args, config: dict) -> dict:
+    """CLI flags win, then config.yaml, then the built-in defaults."""
+    if args.headless and args.headed:
+        raise ScenarioError("pass only one of --headless and --headed")
+    if args.headed:
+        headless = False
+    elif args.headless:
+        headless = True
+    else:
+        headless = bool(config.get("headless", False))
+    viewport = config.get("viewport") or {}
+    return {
+        "headless": headless,
+        "timeout": _positive_arg(args.timeout, int(config.get("timeout_s", 3600)), "--timeout"),
+        "width": _positive_arg(args.width, int(viewport.get("width", 1920)), "--width"),
+        "height": _positive_arg(args.height, int(viewport.get("height", 1080)), "--height"),
+    }
+
+
 def _default_output(scenario_path: Path, scenario: dict) -> Path:
     stamp = datetime.datetime.now().strftime("%Y%m%dT%H%M%S")
     name = f"{scenario_path.stem}_{view_slug(scenario['view_url'])}_{stamp}.json"
@@ -102,10 +131,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("scenario", type=Path, nargs="?", help="scenario YAML or JSON; not required with --clear-session")
     parser.add_argument("-o", "--out", type=Path, default=None, help="output JSON (default: results/<scenario>_<view>_<time>.json)")
+    parser.add_argument("--config", type=Path, default=None, help="config file (default: ./config.yaml, then the repo config.yaml)")
     parser.add_argument("--headless", action="store_true", help="no visible window; needs a profile that is already signed in")
-    parser.add_argument("--timeout", type=int, default=3600, help="overall timeout in seconds (default 3600)")
-    parser.add_argument("--width", type=int, default=1920, help="viewport width (default 1920)")
-    parser.add_argument("--height", type=int, default=1080, help="viewport height (default 1080)")
+    parser.add_argument("--headed", action="store_true", help="show the window even if config.yaml sets headless: true")
+    parser.add_argument("--timeout", type=int, default=None, help="overall timeout in seconds (default from config, else 3600)")
+    parser.add_argument("--width", type=int, default=None, help="viewport width (default from config, else 1920)")
+    parser.add_argument("--height", type=int, default=None, help="viewport height (default from config, else 1080)")
     parser.add_argument("--dry-run", action="store_true", help="resolve the scenario, print it, and exit")
     parser.add_argument("--fail-on-step-error", action="store_true", help="exit 1 when any measured step fails")
     parser.add_argument(
@@ -116,7 +147,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        profile = profile_dir()
+        config = load_config(args.config)
+        settings = run_settings(args, config)
+        profile = profile_dir(config)
         ensure_profile_safe(profile)
     except ScenarioError as exc:
         print(exc, file=sys.stderr)
@@ -137,7 +170,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     try:
-        scenario = load_scenario(args.scenario)
+        scenario = load_scenario(args.scenario, config=config)
     except ScenarioError as exc:
         print(exc, file=sys.stderr)
         return 1
@@ -173,7 +206,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"view     : {scenario['view_url']}")
     print(f"passes   : {scenario['warmup_passes']} warmup + {scenario['passes']} measured")
     print(f"runner   : {url}")
-    if not args.headless:
+    if not settings["headless"]:
         print("NOTE: if the view asks you to sign in, do it once — the session is kept.")
 
     playwright = None
@@ -182,8 +215,8 @@ def main(argv: list[str] | None = None) -> int:
         playwright = sync_playwright().start()
         ctx = playwright.chromium.launch_persistent_context(
             user_data_dir=str(profile),
-            headless=args.headless,
-            viewport={"width": args.width, "height": args.height},
+            headless=settings["headless"],
+            viewport={"width": settings["width"], "height": settings["height"]},
         )
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.on(
@@ -194,7 +227,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         page.goto(url)
         try:
-            page.wait_for_function("window.__HARNESS_DONE === true", timeout=args.timeout * 1000)
+            page.wait_for_function("window.__HARNESS_DONE === true", timeout=settings["timeout"] * 1000)
         except Exception:
             shot = out.with_suffix(".stuck.png")
             try:
@@ -206,7 +239,7 @@ def main(argv: list[str] | None = None) -> int:
                 "document.getElementById('status') && document.getElementById('status').textContent"
             )
             print(
-                f"harness did not finish within {args.timeout}s\n"
+                f"harness did not finish within {settings['timeout']}s\n"
                 f"  last status : {status}\n"
                 f"  screenshot  : {shot_note}\n"
                 f"  hint: if the screenshot shows a sign-in page, rerun without --headless and sign in once.",
@@ -229,8 +262,8 @@ def main(argv: list[str] | None = None) -> int:
         "recorded_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "fatal_error": fatal,
         "harness_version": __version__,
-        "headless": args.headless,
-        "viewport": {"width": args.width, "height": args.height},
+        "headless": settings["headless"],
+        "viewport": {"width": settings["width"], "height": settings["height"]},
     }
     out.write_text(json.dumps(payload, indent=2))
     print(f"\nresults  : {out}")
