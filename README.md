@@ -166,12 +166,4 @@ The whole step list runs `warmup_passes + passes` times. Start the list with `lo
 
 ## AI agents
 
-`AGENTS.md` is the instruction file for a coding agent. It tells the agent how to turn a written walkthrough into a scenario: use only the sheets, filters, and parameter names you wrote, take `server` and `site` from `config.yaml`, keep step labels identical across an A/B pair, and write the YAML under `scenarios/local/`.
-
-Codex and Cursor load `AGENTS.md` from the repo root on their own. Claude Code loads `CLAUDE.md` and does not load `AGENTS.md`. To give Claude the same text, symlink it:
-
-```bash
-ln -s AGENTS.md CLAUDE.md
-```
-
-Describe the dashboard in your own words (which sheet, which filters, which two views to compare) and point the agent at `AGENTS.md`.
+For an AI agent, follow `AGENTS.md`. It explains how to turn a written walkthrough into a scenario file.
