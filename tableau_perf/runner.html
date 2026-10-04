@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Tableau perf harness</title>
+<style>
+  body { font: 13px/1.4 -apple-system, Menlo, monospace; margin: 0; display: flex; height: 100vh; }
+  #panel { width: 380px; overflow-y: auto; padding: 10px; background: #111; color: #ddd; flex-shrink: 0; }
+  #panel h1 { font-size: 14px; margin: 0 0 8px; color: #fff; }
+  #log div { padding: 1px 0; border-bottom: 1px solid #222; }
+  .ok { color: #7c7; } .err { color: #e77; } .info { color: #7af; }
+  #vizhost { flex-grow: 1; }
+  tableau-viz { width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<div id="panel">
+  <h1>Tableau perf harness</h1>
+  <div id="status" class="info">loading scenario…</div>
+  <div id="log"></div>
+</div>
+<div id="vizhost"></div>
+
+<script type="module">
+const $log = document.getElementById('log');
+const $status = document.getElementById('status');
+const log = (msg, cls) => {
+  const d = document.createElement('div');
+  d.textContent = msg;
+  if (cls) d.className = cls;
+  $log.appendChild(d);
+  d.scrollIntoView();
+};
+const setStatus = (msg, cls) => { $status.textContent = msg; $status.className = cls || 'info'; };
+
+window.__HARNESS_DONE = false;
+window.__HARNESS_RESULTS = null;
+window.__HARNESS_ERROR = null;
+
+const results = [];
+let viz = null;
+let api = null;
+
+const now = () => performance.now();
+const asArray = (v) => Array.isArray(v) ? v : [v];
+
+function firstInteractive(v, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`firstinteractive timeout (${Math.round(timeoutMs / 1000)}s)`)), timeoutMs);
+    v.addEventListener('firstinteractive', () => { clearTimeout(t); resolve(); });
+    v.addEventListener('vizloaderror', (e) => { clearTimeout(t); reject(new Error('vizloaderror: ' + JSON.stringify(e.detail || ''))); });
+  });
+}
+
+async function createViz(viewUrl, timeoutMs) {
+  if (viz) { viz.remove(); viz = null; }
+  const v = new api.TableauViz();
+  v.src = viewUrl;
+  v.toolbar = 'hidden';
+  const ready = firstInteractive(v, timeoutMs);
+  document.getElementById('vizhost').appendChild(v);
+  await ready;
+  viz = v;
+  return v;
+}
+
+function activeWorksheets() {
+  const sheet = viz.workbook.activeSheet;
+  if (sheet.sheetType === 'worksheet') return [sheet];
+  return sheet.worksheets;
+}
+
+function findWorksheet(name) {
+  const matches = activeWorksheets().filter(w => w.name === name);
+  if (!matches.length) throw new Error(`worksheet '${name}' not on active sheet (have: ${activeWorksheets().map(w => w.name).join(', ')})`);
+  return matches[0];
+}
+
+async function execStep(step, scenario) {
+  switch (step.action) {
+    case 'load':
+      await createViz(scenario.view_url, (scenario.interactive_timeout_s ?? 300) * 1000);
+      return;
+    case 'tab':
+      await viz.workbook.activateSheetAsync(step.name);
+      return;
+    case 'parameter':
+      await viz.workbook.changeParameterValueAsync(step.name, step.value);
+      return;
+    case 'filter': {
+      const values = asArray(step.values ?? step.value);
+      const mode = step.mode || 'replace';
+      const targets = step.sheet ? [findWorksheet(step.sheet)]
+                                 : activeWorksheets();
+      let applied = 0;
+      for (const ws of targets) {
+        try { await ws.applyFilterAsync(step.field, values, mode); applied++; }
+        catch (e) { if (step.sheet) throw e; /* sheet lacks the field — skip */ }
+      }
+      if (!applied) throw new Error(`filter field '${step.field}' not found on any active worksheet`);
+      return;
+    }
+    case 'clear_filter': {
+      const targets = step.sheet ? [findWorksheet(step.sheet)] : activeWorksheets();
+      let cleared = 0;
+      for (const ws of targets) {
+        try { await ws.applyFilterAsync(step.field, [], 'all'); cleared++; }
+        catch (e) { if (step.sheet) throw e; }
+      }
+      if (!cleared) throw new Error(`filter field '${step.field}' not found on any active worksheet`);
+      return;
+    }
+    case 'select_marks': {
+      const ws = findWorksheet(step.sheet);
+      await ws.selectMarksByValueAsync(
+        [{ fieldName: step.field, value: asArray(step.values ?? step.value) }],
+        'select-replace'
+      );
+      return;
+    }
+    case 'clear_selection': {
+      const ws = findWorksheet(step.sheet);
+      await ws.clearSelectedMarksAsync();
+      return;
+    }
+    case 'refresh':
+      await viz.refreshDataAsync();
+      return;
+    case 'pause':
+      await new Promise(r => setTimeout(r, step.ms || 1000));
+      return;
+    default:
+      throw new Error(`unknown action '${step.action}'`);
+  }
+}
+
+function stepLabel(step, idx) {
+  if (step.label) return step.label;
+  const bits = [step.action, step.name, step.field, step.sheet].filter(Boolean);
+  return `${idx.toString().padStart(2, '0')} ${bits.join(' ')}`;
+}
+
+async function main() {
+  const params = new URLSearchParams(location.search);
+  const scenarioUrl = params.get('scenario');
+  if (!scenarioUrl) throw new Error('missing ?scenario= parameter');
+
+  const scenario = await (await fetch(scenarioUrl, { cache: 'no-store' })).json();
+  const origin = new URL(scenario.view_url).origin;
+  setStatus('loading embedding API from ' + origin);
+  api = await import(`${origin}/javascripts/api/tableau.embedding.3.latest.min.js`);
+
+  const warmup = scenario.warmup_passes ?? 1;
+  const passes = scenario.passes ?? 3;
+  const total = warmup + passes;
+
+  for (let pass = 0; pass < total; pass++) {
+    const isWarmup = pass < warmup;
+    setStatus(`pass ${pass + 1}/${total}${isWarmup ? ' (warmup)' : ''}`);
+    for (let idx = 0; idx < scenario.steps.length; idx++) {
+      const step = scenario.steps[idx];
+      const label = stepLabel(step, idx);
+      const t0 = now();
+      let ok = true, error = null;
+      try {
+        await execStep(step, scenario);
+      } catch (e) {
+        ok = false;
+        error = String(e && e.message || e);
+      }
+      const ms = now() - t0;
+      if (step.action !== 'pause') {
+        results.push({ pass, warmup: isWarmup, idx, action: step.action, label, ms: Math.round(ms * 10) / 10, ok, error });
+      }
+      log(`[p${pass + 1}] ${label}: ${(ms / 1000).toFixed(2)}s${ok ? '' : ' FAILED: ' + error}`, ok ? 'ok' : 'err');
+      if (scenario.step_gap_ms) await new Promise(r => setTimeout(r, scenario.step_gap_ms));
+    }
+  }
+
+  window.__HARNESS_RESULTS = { scenario, results };
+  window.__HARNESS_DONE = true;
+  setStatus('DONE — results captured', 'ok');
+}
+
+main().catch(e => {
+  window.__HARNESS_ERROR = String(e && e.message || e);
+  window.__HARNESS_RESULTS = { results };
+  window.__HARNESS_DONE = true;
+  setStatus('FATAL: ' + window.__HARNESS_ERROR, 'err');
+});
+</script>
+</body>
+</html>

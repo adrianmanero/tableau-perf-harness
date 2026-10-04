@@ -1,0 +1,21 @@
+{
+  "meta": {
+    "scenario_file": "candidate.yaml",
+    "view_url": "https://example.online.tableau.com/t/your-site/views/WorkbookCandidate/Overview",
+    "recorded_at": "2026-01-15T09:10:00+00:00",
+    "fatal_error": null,
+    "harness_version": "1.0.0",
+    "headless": false,
+    "viewport": {"width": 1920, "height": 1080}
+  },
+  "results": [
+    {"pass": 0, "warmup": true, "idx": 0, "action": "load", "label": "load: overview", "ms": 8000, "ok": true, "error": null},
+    {"pass": 0, "warmup": true, "idx": 1, "action": "refresh", "label": "refresh data", "ms": 2800, "ok": true, "error": null},
+    {"pass": 1, "warmup": false, "idx": 0, "action": "load", "label": "load: overview", "ms": 2600, "ok": true, "error": null},
+    {"pass": 1, "warmup": false, "idx": 1, "action": "refresh", "label": "refresh data", "ms": 900, "ok": true, "error": null},
+    {"pass": 2, "warmup": false, "idx": 0, "action": "load", "label": "load: overview", "ms": 2500, "ok": true, "error": null},
+    {"pass": 2, "warmup": false, "idx": 1, "action": "refresh", "label": "refresh data", "ms": 800, "ok": true, "error": null},
+    {"pass": 3, "warmup": false, "idx": 0, "action": "load", "label": "load: overview", "ms": 2400, "ok": true, "error": null},
+    {"pass": 3, "warmup": false, "idx": 1, "action": "refresh", "label": "refresh data", "ms": 1000, "ok": true, "error": null}
+  ]
+}

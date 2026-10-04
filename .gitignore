@@ -1,0 +1,22 @@
+# Run output. Contains view URLs, filter values, and timings.
+results/
+*.stuck.png
+
+# Real scenarios belong here. Templates in examples/ are the ones to commit.
+scenarios/local/*
+!scenarios/local/.gitkeep
+
+# Browser profile (sign-in cookies). The default lives in ~/.cache, outside this tree.
+.tableau-perf-profile/
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+.DS_Store

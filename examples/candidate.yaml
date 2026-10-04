@@ -1,0 +1,28 @@
+# Candidate side of an A/B pair. Step labels match examples/baseline.yaml.
+# Copy this file to scenarios/local/ and point view_url at the view you changed.
+name: candidate
+view_url: https://your-pod.online.tableau.com/#/site/your-site/views/WorkbookCandidate/Overview
+warmup_passes: 1
+passes: 3
+step_gap_ms: 500
+
+steps:
+  - action: load
+    label: "load: overview"
+  - action: refresh
+    label: "refresh data"
+  - action: parameter
+    name: Start Date
+    value: "{today-7d}"
+    label: "param: Start Date -> 7 days ago"
+  - action: parameter
+    name: Start Date
+    value: "{year-start}"
+    label: "param: Start Date -> start of year"
+  - action: filter
+    field: Category
+    values: ["Example"]
+    label: "filter: Category -> Example"
+  - action: clear_filter
+    field: Category
+    label: "clear filter: Category"

@@ -1,0 +1,29 @@
+# Baseline side of an A/B pair.
+# Copy this file to scenarios/local/ and replace the URL and captions.
+# Keep the step labels identical to the candidate scenario.
+name: baseline
+view_url: https://your-pod.online.tableau.com/#/site/your-site/views/Workbook/Overview
+warmup_passes: 1
+passes: 3
+step_gap_ms: 500
+
+steps:
+  - action: load
+    label: "load: overview"
+  - action: refresh
+    label: "refresh data"
+  - action: parameter
+    name: Start Date
+    value: "{today-7d}"
+    label: "param: Start Date -> 7 days ago"
+  - action: parameter
+    name: Start Date
+    value: "{year-start}"
+    label: "param: Start Date -> start of year"
+  - action: filter
+    field: Category
+    values: ["Example"]
+    label: "filter: Category -> Example"
+  - action: clear_filter
+    field: Category
+    label: "clear filter: Category"
